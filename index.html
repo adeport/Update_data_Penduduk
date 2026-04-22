@@ -208,7 +208,7 @@ function showToast(msg, type = 'success') {
 // ===== CAMERA =====
 async function startCamera() {
   try {
-    cameraStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } } });
+    cameraStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
     const video = document.getElementById('video');
     video.srcObject = cameraStream;
     document.getElementById('camera-wrap').classList.remove('hidden');
