@@ -1,0 +1,537 @@
+<!doctype html>
+<html lang="id" class="h-full">
+ <head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>KK Scanner</title>
+  <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+  <script src="https://cdn.jsdelivr.net/npm/lucide@0.263.0/dist/umd/lucide.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="/_sdk/element_sdk.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&amp;display=swap" rel="stylesheet">
+  <style>
+* { font-family: 'Plus Jakarta Sans', sans-serif; }
+.toast { animation: slideIn 0.3s ease, fadeOut 0.3s ease 2.7s; }
+@keyframes slideIn { from { transform: translateY(-20px); opacity:0 } to { transform: translateY(0); opacity:1 } }
+@keyframes fadeOut { to { opacity:0 } }
+/* Crop overlay */
+.crop-handle { width:16px; height:16px; background:#fff; border:2px solid #0ea5e9; border-radius:50%; position:absolute; cursor:grab; z-index:20; touch-action:none; }
+.crop-region { position:absolute; border:2px dashed #0ea5e9; background:rgba(14,165,233,0.08); z-index:10; }
+</style>
+  <style>body { box-sizing: border-box; }</style>
+  <script src="/_sdk/data_sdk.js" type="text/javascript"></script>
+ </head>
+ <body class="h-full bg-slate-950 text-slate-100 overflow-auto">
+  <div id="app" class="w-full h-full min-h-full">
+   <!-- Toast container -->
+   <div id="toast-container" class="fixed top-4 right-4 z-50 flex flex-col gap-2"></div><!-- Header -->
+   <header class="bg-gradient-to-r from-sky-600 to-cyan-500 px-4 py-5 shadow-lg shadow-sky-900/30">
+    <div class="max-w-5xl mx-auto flex items-center gap-3">
+     <div class="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center"><i data-lucide="scan-line" class="w-5 h-5 text-white"></i>
+     </div>
+     <div>
+      <h1 id="el-title" class="text-xl font-800 text-white tracking-tight">Scanner Kartu Keluarga</h1>
+      <p class="text-sky-100 text-xs font-medium">Capture · OCR · Export Excel</p>
+     </div>
+    </div>
+   </header>
+   <main class="max-w-5xl mx-auto p-4 space-y-6 pb-12">
+    <!-- Step 1: Camera / Capture -->
+    <section class="bg-slate-900 rounded-2xl border border-slate-800 overflow-hidden">
+     <div class="px-5 py-3 border-b border-slate-800 flex items-center gap-2">
+      <span class="w-6 h-6 rounded-full bg-sky-500 text-white text-xs font-bold flex items-center justify-center">1</span>
+      <h2 class="font-semibold text-sm">Ambil Foto Kartu Keluarga</h2>
+     </div>
+     <div class="p-4 space-y-3">
+      <!-- Camera view -->
+      <div id="camera-wrap" class="relative bg-black rounded-xl overflow-hidden aspect-video hidden">
+       <video id="video" autoplay playsinline class="w-full h-full object-contain"></video>
+      </div><!-- Captured image with crop -->
+      <div id="capture-wrap" class="relative bg-black rounded-xl overflow-hidden hidden">
+       <canvas id="captureCanvas" class="w-full"></canvas><!-- Crop overlay -->
+       <div id="crop-region" class="crop-region hidden"></div>
+       <div id="crop-tl" class="crop-handle hidden" style="top:0;left:0"></div>
+       <div id="crop-br" class="crop-handle hidden" style="bottom:0;right:0"></div>
+      </div>
+      <div class="flex flex-wrap gap-2">
+       <button id="btn-start-cam" onclick="startCamera()" class="px-4 py-2 bg-sky-500 hover:bg-sky-400 rounded-lg text-sm font-semibold flex items-center gap-2 transition"><i data-lucide="camera" class="w-4 h-4"></i>Buka Kamera</button> <button id="btn-capture" onclick="capturePhoto()" class="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 rounded-lg text-sm font-semibold flex items-center gap-2 transition hidden"><i data-lucide="aperture" class="w-4 h-4"></i>Ambil Foto</button> <button id="btn-crop" onclick="applyCrop()" class="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-900 rounded-lg text-sm font-semibold flex items-center gap-2 transition hidden"><i data-lucide="crop" class="w-4 h-4"></i>Crop &amp; OCR</button> <button id="btn-ocr-full" onclick="runOCR(false)" class="px-4 py-2 bg-violet-500 hover:bg-violet-400 rounded-lg text-sm font-semibold flex items-center gap-2 transition hidden"><i data-lucide="scan-line" class="w-4 h-4"></i>OCR Tanpa Crop</button> <button id="btn-retake" onclick="retakePhoto()" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm font-semibold flex items-center gap-2 transition hidden"><i data-lucide="refresh-cw" class="w-4 h-4"></i>Ulangi</button>
+      </div>
+     </div>
+    </section><!-- Loading overlay -->
+    <div id="ocr-loading" class="hidden bg-slate-900 rounded-2xl border border-slate-800 p-8 text-center space-y-3">
+     <div class="inline-block w-10 h-10 border-4 border-sky-500 border-t-transparent rounded-full animate-spin"></div>
+     <p class="text-sky-300 font-semibold text-sm">Memproses OCR... Mohon tunggu</p>
+     <p id="ocr-progress" class="text-slate-400 text-xs">0%</p>
+    </div><!-- Step 2: Form -->
+    <section class="bg-slate-900 rounded-2xl border border-slate-800 overflow-hidden">
+     <div class="px-5 py-3 border-b border-slate-800 flex items-center gap-2">
+      <span class="w-6 h-6 rounded-full bg-sky-500 text-white text-xs font-bold flex items-center justify-center">2</span>
+      <h2 class="font-semibold text-sm">Data Kartu Keluarga</h2>
+     </div>
+     <form id="kk-form" class="p-4 space-y-4" onsubmit="handleSubmit(event)">
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+       <div>
+        <label for="inp-nokk" class="block text-xs font-semibold text-slate-400 mb-1">No. KK</label> <input id="inp-nokk" type="text" maxlength="16" placeholder="16 digit angka" class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500 focus:border-sky-500 outline-none transition">
+        <p id="err-nokk" class="text-red-400 text-xs mt-1 hidden"></p>
+       </div>
+       <div>
+        <label for="inp-kepala" class="block text-xs font-semibold text-slate-400 mb-1">Nama Kepala Keluarga</label> <input id="inp-kepala" type="text" placeholder="Nama lengkap" class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500 focus:border-sky-500 outline-none transition">
+       </div>
+      </div>
+      <div>
+       <label for="inp-alamat" class="block text-xs font-semibold text-slate-400 mb-1">Alamat</label> <input id="inp-alamat" type="text" placeholder="Alamat lengkap" class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500 focus:border-sky-500 outline-none transition">
+      </div><!-- Anggota Keluarga -->
+      <div class="border border-slate-700 rounded-xl p-4 space-y-3">
+       <div class="flex items-center justify-between">
+        <h3 class="text-sm font-semibold text-slate-300">Anggota Keluarga</h3><button type="button" onclick="addAnggota()" class="text-xs bg-sky-500/20 text-sky-300 hover:bg-sky-500/30 px-3 py-1 rounded-lg font-semibold transition">+ Tambah</button>
+       </div>
+       <div id="anggota-list" class="space-y-3"></div>
+      </div>
+      <div class="flex gap-2">
+       <button type="submit" class="px-5 py-2.5 bg-sky-500 hover:bg-sky-400 rounded-lg text-sm font-bold flex items-center gap-2 transition"><i data-lucide="save" class="w-4 h-4"></i>Simpan Data</button> <button type="button" onclick="resetForm()" class="px-5 py-2.5 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm font-semibold transition">Reset Form</button>
+      </div>
+     </form>
+    </section><!-- Step 3: Table -->
+    <section class="bg-slate-900 rounded-2xl border border-slate-800 overflow-hidden">
+     <div class="px-5 py-3 border-b border-slate-800 flex items-center justify-between">
+      <div class="flex items-center gap-2">
+       <span class="w-6 h-6 rounded-full bg-sky-500 text-white text-xs font-bold flex items-center justify-center">3</span>
+       <h2 class="font-semibold text-sm">Data Tersimpan</h2><span id="data-count" class="text-xs bg-slate-800 text-slate-400 px-2 py-0.5 rounded-full">0</span>
+      </div>
+      <div class="flex gap-2">
+       <button onclick="downloadExcel()" class="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-400 rounded-lg text-xs font-semibold flex items-center gap-1 transition"><i data-lucide="download" class="w-3 h-3"></i>Excel</button> <button onclick="clearAllData(this)" class="px-3 py-1.5 bg-red-500/20 text-red-300 hover:bg-red-500/30 rounded-lg text-xs font-semibold transition">Hapus Semua</button>
+      </div>
+     </div>
+     <div class="overflow-x-auto">
+      <table class="w-full text-xs">
+       <thead class="bg-slate-800/60 text-slate-400">
+        <tr>
+         <th class="px-3 py-2 text-left">No</th>
+         <th class="px-3 py-2 text-left">No KK</th>
+         <th class="px-3 py-2 text-left">Kepala Keluarga</th>
+         <th class="px-3 py-2 text-left">Alamat</th>
+         <th class="px-3 py-2 text-left">NIK</th>
+         <th class="px-3 py-2 text-left">Nama Anggota</th>
+         <th class="px-3 py-2 text-left">JK</th>
+         <th class="px-3 py-2 text-left">Waktu</th>
+         <th class="px-3 py-2 text-left">Aksi</th>
+        </tr>
+       </thead>
+       <tbody id="data-table" class="divide-y divide-slate-800"></tbody>
+      </table>
+      <div id="empty-state" class="p-8 text-center text-slate-500 text-sm">
+       Belum ada data tersimpan
+      </div>
+     </div>
+    </section>
+   </main>
+  </div>
+  <script>
+// ===== STATE =====
+let savedData = [];
+let cameraStream = null;
+let anggotaCount = 0;
+let cropStart = { x: 0, y: 0 };
+let cropEnd = { x: 100, y: 100 };
+
+// ===== LOCALSTORAGE HELPERS =====
+function loadData() {
+  const stored = localStorage.getItem('kkScannerData');
+  savedData = stored ? JSON.parse(stored) : [];
+  renderTable();
+}
+
+function saveData() {
+  localStorage.setItem('kkScannerData', JSON.stringify(savedData));
+}
+
+// ===== DEFAULT CONFIG =====
+const defaultConfig = {
+  app_title: 'Scanner Kartu Keluarga',
+  background_color: '#020617',
+  surface_color: '#0f172a',
+  text_color: '#f1f5f9',
+  primary_color: '#0ea5e9',
+  secondary_color: '#10b981'
+};
+
+// ===== ELEMENT SDK =====
+window.elementSdk.init({
+  defaultConfig,
+  onConfigChange: async (config) => {
+    const t = config.app_title || defaultConfig.app_title;
+    document.getElementById('el-title').textContent = t;
+
+    const bg = config.background_color || defaultConfig.background_color;
+    const sf = config.surface_color || defaultConfig.surface_color;
+    const tx = config.text_color || defaultConfig.text_color;
+    const pr = config.primary_color || defaultConfig.primary_color;
+    const sc = config.secondary_color || defaultConfig.secondary_color;
+
+    document.body.style.backgroundColor = bg;
+    document.body.style.color = tx;
+
+    document.querySelectorAll('section, #ocr-loading').forEach(el => {
+      el.style.backgroundColor = sf;
+      el.style.borderColor = bg;
+    });
+  },
+  mapToCapabilities: (config) => ({
+    recolorables: [
+      { get: () => config.background_color || defaultConfig.background_color, set: v => { config.background_color = v; window.elementSdk.setConfig({ background_color: v }); } },
+      { get: () => config.surface_color || defaultConfig.surface_color, set: v => { config.surface_color = v; window.elementSdk.setConfig({ surface_color: v }); } },
+      { get: () => config.text_color || defaultConfig.text_color, set: v => { config.text_color = v; window.elementSdk.setConfig({ text_color: v }); } },
+      { get: () => config.primary_color || defaultConfig.primary_color, set: v => { config.primary_color = v; window.elementSdk.setConfig({ primary_color: v }); } },
+      { get: () => config.secondary_color || defaultConfig.secondary_color, set: v => { config.secondary_color = v; window.elementSdk.setConfig({ secondary_color: v }); } },
+    ],
+    borderables: [],
+    fontEditable: undefined,
+    fontSizeable: undefined
+  }),
+  mapToEditPanelValues: (config) => new Map([
+    ['app_title', config.app_title || defaultConfig.app_title]
+  ])
+});
+
+// ===== TOAST =====
+function showToast(msg, type = 'success') {
+  const c = document.getElementById('toast-container');
+  const colors = { success: 'bg-emerald-500', error: 'bg-red-500', info: 'bg-sky-500' };
+  const d = document.createElement('div');
+  d.className = `toast ${colors[type] || colors.info} text-white text-sm font-semibold px-4 py-2.5 rounded-xl shadow-lg`;
+  d.textContent = msg;
+  c.appendChild(d);
+  setTimeout(() => d.remove(), 3000);
+}
+
+// ===== CAMERA =====
+async function startCamera() {
+  try {
+    cameraStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } } });
+    const video = document.getElementById('video');
+    video.srcObject = cameraStream;
+    document.getElementById('camera-wrap').classList.remove('hidden');
+    document.getElementById('btn-capture').classList.remove('hidden');
+    document.getElementById('btn-start-cam').classList.add('hidden');
+  } catch (e) {
+    showToast('Gagal mengakses kamera: ' + e.message, 'error');
+  }
+}
+
+function capturePhoto() {
+  const video = document.getElementById('video');
+  const canvas = document.getElementById('captureCanvas');
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  canvas.getContext('2d').drawImage(video, 0, 0);
+
+  // Stop camera
+  if (cameraStream) { cameraStream.getTracks().forEach(t => t.stop()); cameraStream = null; }
+  document.getElementById('camera-wrap').classList.add('hidden');
+  document.getElementById('capture-wrap').classList.remove('hidden');
+  document.getElementById('btn-capture').classList.add('hidden');
+  document.getElementById('btn-crop').classList.remove('hidden');
+  document.getElementById('btn-ocr-full').classList.remove('hidden');
+  document.getElementById('btn-retake').classList.remove('hidden');
+
+  // Init crop region
+  initCrop();
+}
+
+function retakePhoto() {
+  document.getElementById('capture-wrap').classList.add('hidden');
+  document.getElementById('btn-crop').classList.add('hidden');
+  document.getElementById('btn-ocr-full').classList.add('hidden');
+  document.getElementById('btn-retake').classList.add('hidden');
+  document.getElementById('btn-start-cam').classList.remove('hidden');
+  hideCropHandles();
+}
+
+// ===== CROP =====
+function initCrop() {
+  const wrap = document.getElementById('capture-wrap');
+  const region = document.getElementById('crop-region');
+  const tl = document.getElementById('crop-tl');
+  const br = document.getElementById('crop-br');
+
+  region.classList.remove('hidden');
+  tl.classList.remove('hidden');
+  br.classList.remove('hidden');
+
+  // Default crop: 10%-90%
+  cropStart = { x: 10, y: 10 };
+  cropEnd = { x: 90, y: 90 };
+  updateCropUI();
+
+  // Draggable handles
+  makeDraggable(tl, 'start');
+  makeDraggable(br, 'end');
+}
+
+function updateCropUI() {
+  const region = document.getElementById('crop-region');
+  const tl = document.getElementById('crop-tl');
+  const br = document.getElementById('crop-br');
+  region.style.left = cropStart.x + '%'; region.style.top = cropStart.y + '%';
+  region.style.width = (cropEnd.x - cropStart.x) + '%'; region.style.height = (cropEnd.y - cropStart.y) + '%';
+  tl.style.left = cropStart.x + '%'; tl.style.top = cropStart.y + '%'; tl.style.transform = 'translate(-50%,-50%)';
+  br.style.left = cropEnd.x + '%'; br.style.top = cropEnd.y + '%'; br.style.transform = 'translate(-50%,-50%)';
+}
+
+function makeDraggable(el, which) {
+  const onMove = (cx, cy) => {
+    const wrap = document.getElementById('capture-wrap');
+    const rect = wrap.getBoundingClientRect();
+    let px = ((cx - rect.left) / rect.width) * 100;
+    let py = ((cy - rect.top) / rect.height) * 100;
+    px = Math.max(0, Math.min(100, px));
+    py = Math.max(0, Math.min(100, py));
+    if (which === 'start') { cropStart = { x: Math.min(px, cropEnd.x - 5), y: Math.min(py, cropEnd.y - 5) }; }
+    else { cropEnd = { x: Math.max(px, cropStart.x + 5), y: Math.max(py, cropStart.y + 5) }; }
+    updateCropUI();
+  };
+  el.onmousedown = e => { e.preventDefault(); const mv = e2 => onMove(e2.clientX, e2.clientY); const up = () => { document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up); }; document.addEventListener('mousemove', mv); document.addEventListener('mouseup', up); };
+  el.ontouchstart = e => { e.preventDefault(); const mv = e2 => { const t = e2.touches[0]; onMove(t.clientX, t.clientY); }; const up = () => { document.removeEventListener('touchmove', mv); document.removeEventListener('touchend', up); }; document.addEventListener('touchmove', mv); document.addEventListener('touchend', up); };
+}
+
+function hideCropHandles() {
+  document.getElementById('crop-region').classList.add('hidden');
+  document.getElementById('crop-tl').classList.add('hidden');
+  document.getElementById('crop-br').classList.add('hidden');
+}
+
+function applyCrop() { runOCR(true); }
+
+// ===== OCR =====
+async function runOCR(useCrop) {
+  const canvas = document.getElementById('captureCanvas');
+  let imageData;
+
+  if (useCrop) {
+    // Create cropped canvas
+    const cw = canvas.width, ch = canvas.height;
+    const sx = (cropStart.x / 100) * cw, sy = (cropStart.y / 100) * ch;
+    const sw = ((cropEnd.x - cropStart.x) / 100) * cw, sh = ((cropEnd.y - cropStart.y) / 100) * ch;
+    const tmpC = document.createElement('canvas');
+    tmpC.width = sw; tmpC.height = sh;
+    tmpC.getContext('2d').drawImage(canvas, sx, sy, sw, sh, 0, 0, sw, sh);
+    imageData = tmpC.toDataURL('image/png');
+  } else {
+    imageData = canvas.toDataURL('image/png');
+  }
+
+  document.getElementById('ocr-loading').classList.remove('hidden');
+
+  try {
+    const result = await Tesseract.recognize(imageData, 'ind+eng', {
+      logger: m => {
+        if (m.status === 'recognizing text') {
+          document.getElementById('ocr-progress').textContent = Math.round((m.progress || 0) * 100) + '%';
+        }
+      }
+    });
+    const text = result.data.text;
+    parseOCRText(text);
+    showToast('OCR selesai! Periksa dan edit data di form.', 'success');
+  } catch (e) {
+    showToast('OCR gagal: ' + e.message, 'error');
+  } finally {
+    document.getElementById('ocr-loading').classList.add('hidden');
+  }
+}
+
+// ===== PARSE OCR TEXT =====
+function parseOCRText(text) {
+  const lines = text.split('\n').map(l => l.trim()).filter(l => l);
+
+  // Try to find No KK (16 digit number)
+  let nokk = '';
+  for (const line of lines) {
+    const m = line.replace(/\s/g, '').match(/(\d{16})/);
+    if (m) { nokk = m[1]; break; }
+  }
+  document.getElementById('inp-nokk').value = nokk;
+
+  // Try to find Kepala Keluarga
+  let kepala = '';
+  for (let i = 0; i < lines.length; i++) {
+    if (/kepala\s*keluarga/i.test(lines[i])) {
+      // Name might be on same line after colon, or next line
+      const after = lines[i].split(/[:]/)[1];
+      if (after && after.trim().length > 2) { kepala = after.trim(); }
+      else if (i + 1 < lines.length) { kepala = lines[i + 1]; }
+      break;
+    }
+  }
+  document.getElementById('inp-kepala').value = kepala;
+
+  // Try to find Alamat
+  let alamat = '';
+  for (let i = 0; i < lines.length; i++) {
+    if (/alamat/i.test(lines[i])) {
+      const after = lines[i].split(/[:]/)[1];
+      if (after && after.trim().length > 2) { alamat = after.trim(); }
+      else if (i + 1 < lines.length) { alamat = lines[i + 1]; }
+      break;
+    }
+  }
+  document.getElementById('inp-alamat').value = alamat;
+
+  // Try to find NIK entries (16-digit numbers that aren't the KK number)
+  const niks = [];
+  const names = [];
+  for (const line of lines) {
+    const digits = line.replace(/\s/g, '').match(/(\d{16})/g);
+    if (digits) {
+      digits.forEach(d => { if (d !== nokk && !niks.includes(d)) niks.push(d); });
+    }
+  }
+
+  // Clear existing anggota and add found ones
+  document.getElementById('anggota-list').innerHTML = '';
+  anggotaCount = 0;
+  if (niks.length > 0) {
+    niks.forEach(nik => {
+      addAnggota();
+      const items = document.querySelectorAll('.anggota-item');
+      const last = items[items.length - 1];
+      last.querySelector('.nik-input').value = nik;
+    });
+  } else {
+    addAnggota();
+  }
+}
+
+// ===== ANGGOTA KELUARGA =====
+function addAnggota() {
+  anggotaCount++;
+  const list = document.getElementById('anggota-list');
+  const div = document.createElement('div');
+  div.className = 'anggota-item bg-slate-800/50 rounded-lg p-3 space-y-2';
+  div.innerHTML = `
+    <div class="flex items-center justify-between">
+      <span class="text-xs font-semibold text-slate-400">Anggota #${anggotaCount}</span>
+      <button type="button" onclick="this.closest('.anggota-item').remove()" class="text-red-400 hover:text-red-300 text-xs">Hapus</button>
+    </div>
+    <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+      <input class="nik-input w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs focus:ring-2 focus:ring-sky-500 outline-none" placeholder="NIK (16 digit)" maxlength="16">
+      <input class="nama-input w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs focus:ring-2 focus:ring-sky-500 outline-none" placeholder="Nama Anggota">
+      <select class="jk-input w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs focus:ring-2 focus:ring-sky-500 outline-none">
+        <option value="">Jenis Kelamin</option>
+        <option value="Laki-laki">Laki-laki</option>
+        <option value="Perempuan">Perempuan</option>
+      </select>
+    </div>`;
+  list.appendChild(div);
+  lucide.createIcons();
+}
+
+// ===== FORM SUBMIT =====
+function handleSubmit(e) {
+  e.preventDefault();
+  const nokk = document.getElementById('inp-nokk').value.trim();
+  const kepala = document.getElementById('inp-kepala').value.trim();
+  const alamat = document.getElementById('inp-alamat').value.trim();
+
+  // Validate
+  document.getElementById('err-nokk').classList.add('hidden');
+  if (!nokk || !/^\d{16}$/.test(nokk)) {
+    document.getElementById('err-nokk').textContent = 'No KK harus 16 digit angka';
+    document.getElementById('err-nokk').classList.remove('hidden');
+    return;
+  }
+  if (!kepala) { showToast('Nama Kepala Keluarga wajib diisi', 'error'); return; }
+
+  // Check duplicate
+  if (savedData.some(d => d.nokk === nokk)) {
+    showToast('No KK sudah ada! Data duplikat tidak diizinkan.', 'error');
+    return;
+  }
+
+  // Collect anggota
+  const anggotaEls = document.querySelectorAll('.anggota-item');
+  const anggota = [];
+  let nikError = false;
+  anggotaEls.forEach(el => {
+    const nik = el.querySelector('.nik-input').value.trim();
+    const nama = el.querySelector('.nama-input').value.trim();
+    const jk = el.querySelector('.jk-input').value;
+    if (nik && !/^\d{16}$/.test(nik)) { nikError = true; }
+    if (nik || nama) anggota.push({ nik, nama, jk });
+  });
+  if (nikError) { showToast('NIK anggota harus 16 digit angka', 'error'); return; }
+
+  const record = { nokk, kepala, alamat, anggota, waktu: new Date().toLocaleString('id-ID') };
+  savedData.push(record);
+  saveData();
+  renderTable();
+  resetForm();
+  showToast('Data berhasil disimpan!');
+}
+
+function resetForm() {
+  document.getElementById('kk-form').reset();
+  document.getElementById('anggota-list').innerHTML = '';
+  anggotaCount = 0;
+  addAnggota();
+  document.getElementById('err-nokk').classList.add('hidden');
+}
+
+// ===== TABLE RENDER =====
+function renderTable() {
+  const tbody = document.getElementById('data-table');
+  const empty = document.getElementById('empty-state');
+  document.getElementById('data-count').textContent = savedData.length;
+
+  if (savedData.length === 0) { tbody.innerHTML = ''; empty.classList.remove('hidden'); return; }
+  empty.classList.add('hidden');
+
+  tbody.innerHTML = '';
+  let rowNum = 0;
+  savedData.forEach((d, idx) => {
+    if (d.anggota.length === 0) {
+      rowNum++;
+      tbody.innerHTML += `<tr class="hover:bg-slate-800/40 transition"><td class="px-3 py-2">${rowNum}</td><td class="px-3 py-2 font-mono">${d.nokk}</td><td class="px-3 py-2">${d.kepala}</td><td class="px-3 py-2">${d.alamat}</td><td class="px-3 py-2">-</td><td class="px-3 py-2">-</td><td class="px-3 py-2">-</td><td class="px-3 py-2 text-slate-400">${d.waktu}</td><td class="px-3 py-2"><button onclick="deleteRow(${idx})" class="text-red-400 hover:text-red-300 text-xs font-semibold">Hapus</button></td></tr>`;
+    } else {
+      d.anggota.forEach(a => {
+        rowNum++;
+        tbody.innerHTML += `<tr class="hover:bg-slate-800/40 transition"><td class="px-3 py-2">${rowNum}</td><td class="px-3 py-2 font-mono">${d.nokk}</td><td class="px-3 py-2">${d.kepala}</td><td class="px-3 py-2">${d.alamat}</td><td class="px-3 py-2 font-mono">${a.nik || '-'}</td><td class="px-3 py-2">${a.nama || '-'}</td><td class="px-3 py-2">${a.jk || '-'}</td><td class="px-3 py-2 text-slate-400">${d.waktu}</td><td class="px-3 py-2"><button onclick="deleteRow(${idx})" class="text-red-400 hover:text-red-300 text-xs font-semibold">Hapus</button></td></tr>`;
+      });
+    }
+  });
+}
+
+function deleteRow(idx) { savedData.splice(idx, 1); saveData(); renderTable(); showToast('Data dihapus', 'info'); }
+
+function clearAllData(btn) {
+  if (savedData.length === 0) return;
+  // Inline confirmation
+  if (btn.dataset.confirm) { savedData = []; saveData(); renderTable(); showToast('Semua data dihapus', 'info'); delete btn.dataset.confirm; btn.textContent = 'Hapus Semua'; return; }
+  btn.dataset.confirm = '1'; btn.textContent = 'Yakin? Klik lagi'; setTimeout(() => { delete btn.dataset.confirm; btn.textContent = 'Hapus Semua'; }, 3000);
+}
+
+// ===== EXCEL EXPORT =====
+function downloadExcel() {
+  if (savedData.length === 0) { showToast('Tidak ada data untuk diunduh', 'error'); return; }
+  const rows = [['No', 'No KK', 'Nama Kepala Keluarga', 'Alamat', 'NIK', 'Nama Anggota', 'Jenis Kelamin', 'Waktu Input']];
+  let num = 0;
+  savedData.forEach(d => {
+    if (d.anggota.length === 0) { num++; rows.push([num, d.nokk, d.kepala, d.alamat, '-', '-', '-', d.waktu]); }
+    else { d.anggota.forEach(a => { num++; rows.push([num, d.nokk, d.kepala, d.alamat, a.nik || '-', a.nama || '-', a.jk || '-', d.waktu]); }); }
+  });
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  ws['!cols'] = [{ wch: 5 }, { wch: 20 }, { wch: 25 }, { wch: 35 }, { wch: 20 }, { wch: 25 }, { wch: 15 }, { wch: 22 }];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Data KK');
+  XLSX.writeFile(wb, 'Data_Kartu_Keluarga.xlsx');
+  showToast('File Excel berhasil diunduh!');
+}
+
+// ===== INIT =====
+loadData();
+addAnggota();
+lucide.createIcons();
+</script>
+ <script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'9f03d78fb13eb4cd',t:'MTc3Njg1MjY2Mi4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
+</html>
